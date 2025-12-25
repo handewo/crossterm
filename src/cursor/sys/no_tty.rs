@@ -7,6 +7,7 @@ use crate::event::{
     filter::CursorPositionFilter, internal::InternalEvent, internal_no_tty::NoTtyEvent,
 };
 
+use crossbeam_channel::RecvTimeoutError;
 /// Returns the cursor position (column, row).
 ///
 /// The top left cell is represented as `(0, 0)`.
@@ -32,6 +33,15 @@ pub fn position(event: &NoTtyEvent) -> io::Result<(u16, u16)> {
                     ErrorKind::Other,
                     "The cursor position could not be read within a normal duration",
                 ));
+            }
+            Err(e) if e.kind() == io::ErrorKind::Other => {
+                if Some(RecvTimeoutError::Disconnected)
+                    == e.get_ref()
+                        .and_then(|src| src.downcast_ref::<RecvTimeoutError>())
+                        .copied()
+                {
+                    return Err(e);
+                }
             }
             Err(_) => {}
         }
