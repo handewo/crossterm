@@ -1,10 +1,9 @@
 use std::{collections::VecDeque, io, time::Duration};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError};
+use tokio::sync::mpsc::Receiver;
 
 use crate::event::{
-    internal::InternalEvent, source::EventSource, sys::unix::parse::parse_event,
-    timeout::PollTimeout,
+    internal::InternalEvent, sys::unix::parse::parse_event, timeout::PollTimeout,
 };
 
 pub struct NoTtyInternalEventSource {
@@ -19,10 +18,16 @@ impl NoTtyInternalEventSource {
             recv,
         })
     }
-}
 
-impl EventSource for NoTtyInternalEventSource {
-    fn try_read(&mut self, timeout: Option<Duration>) -> io::Result<Option<InternalEvent>> {
+    /// Tries to read an `InternalEvent` within the given duration.
+    ///
+    /// Returns `Ok(None)` if the timeout expires before an event is available, and an
+    /// error with kind [`io::ErrorKind::BrokenPipe`] if the input channel's sender has
+    /// been dropped.
+    pub(crate) async fn try_read(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> io::Result<Option<InternalEvent>> {
         if let Some(event) = self.parser.next() {
             return Ok(Some(event));
         }
@@ -33,11 +38,17 @@ impl EventSource for NoTtyInternalEventSource {
             let t = timeout
                 .leftover()
                 .unwrap_or(std::time::Duration::from_secs(u64::MAX));
-            let data = match self.recv.recv_timeout(t) {
-                Ok(d) => d,
-                Err(RecvTimeoutError::Timeout) => return Ok(None),
-                // NOTE: fake io error
-                Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
+            let data = match tokio::time::timeout(t, self.recv.recv()).await {
+                Ok(Some(d)) => d,
+                // Sender dropped: signal a broken pipe so callers can bail out.
+                Ok(None) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "no-tty input channel disconnected",
+                    ))
+                }
+                // Timed out waiting for data.
+                Err(_elapsed) => return Ok(None),
             };
 
             if data.is_empty() {

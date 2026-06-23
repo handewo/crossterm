@@ -9,14 +9,19 @@ use crate::event::source::windows::WindowsEventSource;
 #[cfg(feature = "event-stream")]
 #[cfg(not(feature = "no-tty"))]
 use crate::event::sys::Waker;
-use crate::event::{
-    filter::Filter, internal::InternalEvent, source::EventSource, timeout::PollTimeout,
-};
+use crate::event::{filter::Filter, internal::InternalEvent, timeout::PollTimeout};
+#[cfg(not(feature = "no-tty"))]
+use crate::event::source::EventSource;
+#[cfg(feature = "no-tty")]
+use crate::event::source::no_tty::NoTtyInternalEventSource;
 
 /// Can be used to read `InternalEvent`s.
 pub(crate) struct InternalEventReader {
     events: VecDeque<InternalEvent>,
+    #[cfg(not(feature = "no-tty"))]
     source: Option<Box<dyn EventSource>>,
+    #[cfg(feature = "no-tty")]
+    source: Option<Box<NoTtyInternalEventSource>>,
     skipped_events: Vec<InternalEvent>,
 }
 
@@ -51,6 +56,7 @@ impl InternalEventReader {
         self.source.as_ref().expect("reader source not set").waker()
     }
 
+    #[cfg(not(feature = "no-tty"))]
     pub(crate) fn poll<F>(&mut self, timeout: Option<Duration>, filter: &F) -> io::Result<bool>
     where
         F: Filter,
@@ -110,6 +116,7 @@ impl InternalEventReader {
     ///
     /// Internally, we use `try_read`, which buffers the events that do not fulfill the filter
     /// conditions to prevent stalling the thread in an infinite loop.
+    #[cfg(not(feature = "no-tty"))]
     pub(crate) fn read<F>(&mut self, filter: &F) -> io::Result<InternalEvent>
     where
         F: Filter,
@@ -121,6 +128,79 @@ impl InternalEventReader {
             }
 
             let _ = self.poll(None, filter)?;
+        }
+    }
+
+    #[cfg(feature = "no-tty")]
+    pub(crate) async fn poll_async<F>(
+        &mut self,
+        timeout: Option<Duration>,
+        filter: &F,
+    ) -> io::Result<bool>
+    where
+        F: Filter,
+    {
+        for event in &self.events {
+            if filter.eval(event) {
+                return Ok(true);
+            }
+        }
+
+        let event_source = match self.source.as_mut() {
+            Some(source) => source,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to initialize input reader",
+                ))
+            }
+        };
+
+        let poll_timeout = PollTimeout::new(timeout);
+
+        loop {
+            let maybe_event = match event_source.try_read(poll_timeout.leftover()).await {
+                Ok(None) => None,
+                Ok(Some(event)) => {
+                    if filter.eval(&event) {
+                        Some(event)
+                    } else {
+                        self.skipped_events.push(event);
+                        None
+                    }
+                }
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        return Ok(false);
+                    }
+                    return Err(e);
+                }
+            };
+
+            if poll_timeout.elapsed() || maybe_event.is_some() {
+                self.events.extend(self.skipped_events.drain(..));
+
+                if let Some(event) = maybe_event {
+                    self.events.push_front(event);
+                    return Ok(true);
+                }
+
+                return Ok(false);
+            }
+        }
+    }
+
+    #[cfg(feature = "no-tty")]
+    pub(crate) async fn read_async<F>(&mut self, filter: &F) -> io::Result<InternalEvent>
+    where
+        F: Filter,
+    {
+        loop {
+            if let Some(event) = self.try_read(filter) {
+                return Ok(event);
+            }
+
+            let _ = self.poll_async(None, filter).await?;
         }
     }
 
@@ -156,13 +236,14 @@ impl InternalEventReader {
 
     #[cfg(unix)]
     #[cfg(feature = "no-tty")]
-    pub(crate) fn with_source(mut self, source: Option<Box<dyn EventSource>>) -> Self {
+    pub(crate) fn with_source(mut self, source: Option<Box<NoTtyInternalEventSource>>) -> Self {
         self.source = source;
         self
     }
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "no-tty"))]
 mod tests {
     use std::io;
     use std::{collections::VecDeque, time::Duration};

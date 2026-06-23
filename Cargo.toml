@@ -39,7 +39,7 @@ derive-more = ["dep:derive_more"]
 #! ### Optional Features
 
 ## Enable non-psudo-terminal
-no-tty = ["dep:crossbeam-channel", "tokio"]
+no-tty = ["dep:tokio", "events"]
 
 ## Enables documentation for crate features.
 document-features = ["dep:document-features"]
@@ -64,8 +64,7 @@ document-features = { version = "0.2.11", optional = true }
 futures-core = { version = "0.3", optional = true, default-features = false }
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"], optional = true }
-crossbeam-channel = { version = "0.5", optional = true }
-tokio = { version = "1", optional = true, features = ["sync"] }
+tokio = { version = "1", optional = true, features = ["sync", "time"] }
 
 
 # Windows dependencies

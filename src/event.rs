@@ -198,8 +198,8 @@ pub fn poll(timeout: Duration) -> std::io::Result<bool> {
 
 #[cfg(unix)]
 #[cfg(feature = "no-tty")]
-pub fn poll(event: &NoTtyEvent, timeout: Duration) -> std::io::Result<bool> {
-    event.poll(Some(timeout), &EventFilter)
+pub async fn poll(event: &NoTtyEvent, timeout: Duration) -> std::io::Result<bool> {
+    event.poll(Some(timeout), &EventFilter).await
 }
 
 /// Reads a single [`Event`](enum.Event.html).
@@ -254,8 +254,8 @@ pub fn read() -> std::io::Result<Event> {
 
 #[cfg(unix)]
 #[cfg(feature = "no-tty")]
-pub fn read(event: &NoTtyEvent) -> std::io::Result<Event> {
-    match event.read(&EventFilter)? {
+pub async fn read(event: &NoTtyEvent) -> std::io::Result<Event> {
+    match event.read(&EventFilter).await? {
         InternalEvent::Event(event) => Ok(event),
         _ => unreachable!(),
     }
@@ -294,8 +294,8 @@ pub fn try_read() -> Option<Event> {
 
 #[cfg(unix)]
 #[cfg(feature = "no-tty")]
-pub fn try_read(event: &NoTtyEvent) -> Option<Event> {
-    match event.try_read(&EventFilter) {
+pub async fn try_read(event: &NoTtyEvent) -> Option<Event> {
+    match event.try_read(&EventFilter).await {
         Some(InternalEvent::Event(event)) => Some(event),
         None => None,
         _ => unreachable!(),
