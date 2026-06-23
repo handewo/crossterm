@@ -44,40 +44,44 @@ pub(crate) fn disable_raw_mode() -> io::Result<()> {
 
 /// Queries the terminal's support for progressive keyboard enhancement.
 ///
-/// On unix systems, this function will block and possibly time out while
-/// [`crossterm::event::read`](crate::event::read) or [`crossterm::event::poll`](crate::event::poll) are being called.
+/// This sends a query out the event handle's query channel and awaits the response. It
+/// may time out while [`crossterm::event::read`](crate::event::read) or
+/// [`crossterm::event::poll`](crate::event::poll) are being awaited.
 #[cfg(feature = "events")]
-pub fn supports_keyboard_enhancement(event: &NoTtyEvent) -> io::Result<bool> {
-    query_keyboard_enhancement_flags(event).map(|flags| flags.is_some())
+pub async fn supports_keyboard_enhancement(event: &NoTtyEvent) -> io::Result<bool> {
+    query_keyboard_enhancement_flags(event)
+        .await
+        .map(|flags| flags.is_some())
 }
 
 /// Queries the terminal's currently active keyboard enhancement flags.
 ///
-/// On unix systems, this function will block and possibly time out while
-/// [`crossterm::event::read`](crate::event::read) or [`crossterm::event::poll`](crate::event::poll) are being called.
+/// This sends a query out the event handle's query channel and awaits the response. It
+/// may time out while [`crossterm::event::read`](crate::event::read) or
+/// [`crossterm::event::poll`](crate::event::poll) are being awaited.
 #[cfg(feature = "events")]
-pub fn query_keyboard_enhancement_flags(
+pub async fn query_keyboard_enhancement_flags(
     event: &NoTtyEvent,
 ) -> io::Result<Option<KeyboardEnhancementFlags>> {
     if is_raw_mode_enabled() {
-        query_keyboard_enhancement_flags_raw(event)
+        query_keyboard_enhancement_flags_raw(event).await
     } else {
-        query_keyboard_enhancement_flags_nonraw(event)
+        query_keyboard_enhancement_flags_nonraw(event).await
     }
 }
 
 #[cfg(feature = "events")]
-fn query_keyboard_enhancement_flags_nonraw(
+async fn query_keyboard_enhancement_flags_nonraw(
     event: &NoTtyEvent,
 ) -> io::Result<Option<KeyboardEnhancementFlags>> {
     enable_raw_mode()?;
-    let flags = query_keyboard_enhancement_flags_raw(event);
+    let flags = query_keyboard_enhancement_flags_raw(event).await;
     disable_raw_mode()?;
     flags
 }
 
 #[cfg(feature = "events")]
-fn query_keyboard_enhancement_flags_raw(
+async fn query_keyboard_enhancement_flags_raw(
     event: &NoTtyEvent,
 ) -> io::Result<Option<KeyboardEnhancementFlags>> {
     use crate::event::{
@@ -100,18 +104,22 @@ fn query_keyboard_enhancement_flags_raw(
     event
         .send
         .send_timeout(QUERY.into(), Duration::from_secs(1))
+        .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
     loop {
-        match event.poll(
-            Some(Duration::from_millis(2000)),
-            &KeyboardEnhancementFlagsFilter,
-        ) {
+        match event
+            .poll(
+                Some(Duration::from_millis(2000)),
+                &KeyboardEnhancementFlagsFilter,
+            )
+            .await
+        {
             Ok(true) => {
-                match event.read(&KeyboardEnhancementFlagsFilter) {
+                match event.read(&KeyboardEnhancementFlagsFilter).await {
                     Ok(InternalEvent::KeyboardEnhancementFlags(current_flags)) => {
                         // Flush the PrimaryDeviceAttributes out of the event queue.
-                        event.read(&PrimaryDeviceAttributesFilter).ok();
+                        event.read(&PrimaryDeviceAttributesFilter).await.ok();
                         return Ok(Some(current_flags));
                     }
                     _ => return Ok(None),
@@ -122,6 +130,10 @@ fn query_keyboard_enhancement_flags_raw(
                     io::ErrorKind::Other,
                     "The keyboard enhancement status could not be read within a normal duration",
                 ));
+            }
+            // The input channel disconnected; propagate so the caller can stop.
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                return Err(e);
             }
             Err(_) => {}
         }

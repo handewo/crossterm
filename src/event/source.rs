@@ -1,5 +1,7 @@
+#[cfg(not(feature = "no-tty"))]
 use std::{io, time::Duration};
 
+#[cfg(not(feature = "no-tty"))]
 use super::internal::InternalEvent;
 #[cfg(feature = "event-stream")]
 #[cfg(not(feature = "no-tty"))]
@@ -16,6 +18,7 @@ pub(crate) mod unix;
 pub(crate) mod windows;
 
 /// An interface for trying to read an `InternalEvent` within an optional `Duration`.
+#[cfg(not(feature = "no-tty"))]
 pub(crate) trait EventSource: Sync + Send {
     /// Tries to read an `InternalEvent` within the given duration.
     ///
@@ -29,6 +32,5 @@ pub(crate) trait EventSource: Sync + Send {
 
     /// Returns a `Waker` allowing to wake/force the `try_read` method to return `Ok(None)`.
     #[cfg(feature = "event-stream")]
-    #[cfg(not(feature = "no-tty"))]
     fn waker(&self) -> Waker;
 }

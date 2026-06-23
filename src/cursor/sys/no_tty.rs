@@ -7,24 +7,30 @@ use crate::event::{
     filter::CursorPositionFilter, internal::InternalEvent, internal_no_tty::NoTtyEvent,
 };
 
-use crossbeam_channel::RecvTimeoutError;
 /// Returns the cursor position (column, row).
 ///
 /// The top left cell is represented as `(0, 0)`.
 ///
-/// On unix systems, this function will block and possibly time out while
-/// [`crossterm::event::read`](crate::event::read) or [`crossterm::event::poll`](crate::event::poll) are being called.
-pub fn position(event: &NoTtyEvent) -> io::Result<(u16, u16)> {
-    // Use `ESC [ 6 n` to and retrieve the cursor position.
+/// This sends a cursor-position query out the event handle's query channel and awaits
+/// the response. It returns an error with kind [`io::ErrorKind::BrokenPipe`] if the
+/// input channel disconnects while waiting.
+pub async fn position(event: &NoTtyEvent) -> io::Result<(u16, u16)> {
+    // Use `ESC [ 6 n` to request the cursor position.
     event
         .send
         .send_timeout(b"\x1B[6n".into(), Duration::from_secs(1))
+        .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
     loop {
-        match event.poll(Some(Duration::from_millis(2000)), &CursorPositionFilter) {
+        match event
+            .poll(Some(Duration::from_millis(2000)), &CursorPositionFilter)
+            .await
+        {
             Ok(true) => {
-                if let Ok(InternalEvent::CursorPosition(x, y)) = event.read(&CursorPositionFilter) {
+                if let Ok(InternalEvent::CursorPosition(x, y)) =
+                    event.read(&CursorPositionFilter).await
+                {
                     return Ok((x, y));
                 }
             }
@@ -34,14 +40,9 @@ pub fn position(event: &NoTtyEvent) -> io::Result<(u16, u16)> {
                     "The cursor position could not be read within a normal duration",
                 ));
             }
-            Err(e) if e.kind() == io::ErrorKind::Other => {
-                if Some(RecvTimeoutError::Disconnected)
-                    == e.get_ref()
-                        .and_then(|src| src.downcast_ref::<RecvTimeoutError>())
-                        .copied()
-                {
-                    return Err(e);
-                }
+            // The input channel disconnected; propagate so the caller can stop.
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                return Err(e);
             }
             Err(_) => {}
         }
