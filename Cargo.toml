@@ -39,7 +39,7 @@ derive-more = ["dep:derive_more"]
 #! ### Optional Features
 
 ## Enable non-psudo-terminal
-no-tty = ["dep:tokio", "events"]
+no-tty = ["dep:tokio", "events", "bracketed-paste"]
 
 ## Enables documentation for crate features.
 document-features = ["dep:document-features"]

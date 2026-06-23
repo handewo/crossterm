@@ -6,17 +6,17 @@ use crossterm::event::{
 };
 use std::time::Duration;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
 use crossterm::event::{NoTtyEvent, SenderWriter};
 use crossterm::{
+    async_execute, async_queue,
     cursor::position,
     event::{
         read, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture, Event, KeyCode,
     },
-    execute, queue,
     terminal::WindowSize,
 };
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use russh::keys::ssh_key::PublicKey;
 use russh::server::*;
 use russh::{Channel, ChannelId, Pty};
@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 struct App {
     pub pty: NoTtyEvent,
     pub send: Sender<Vec<u8>>,
-    pub recv: Receiver<Vec<u8>>,
+    pub recv: Option<Receiver<Vec<u8>>>,
 }
 
 #[derive(Clone)]
@@ -79,12 +79,12 @@ impl Handler for AppServer {
         _channel: Channel<Msg>,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
-        let (app_send, term_recv) = unbounded();
+        let (app_send, term_recv) = channel::<Vec<u8>>(64);
         let (psudo_tty, app_recv) = NoTtyEvent::new(term_recv);
         let app = App {
             pty: psudo_tty,
             send: app_send,
-            recv: app_recv,
+            recv: Some(app_recv),
         };
 
         let mut clients = self.clients.lock().await;
@@ -105,7 +105,7 @@ impl Handler for AppServer {
     ) -> Result<(), Self::Error> {
         let mut clients = self.clients.lock().await;
         let app = clients.get_mut(&self.id).unwrap();
-        let _ = app.send.send(data.into()).unwrap();
+        let _ = app.send.send(data.into()).await;
         if data == [3] {
             return Err(russh::Error::Disconnect);
         }
@@ -139,7 +139,7 @@ impl Handler for AppServer {
         win_raw.push(b';');
         win_raw.extend_from_slice(row.as_bytes());
         win_raw.push(b'R');
-        let _ = app.send.send(win_raw);
+        let _ = app.send.send(win_raw).await;
 
         Ok(())
     }
@@ -188,35 +188,38 @@ impl Handler for AppServer {
         let tx3 = tx.clone();
         const HELP: &str = "Blocking read()\r\n- Keyboard, mouse, focus and terminal resize events enabled\r\n- Hit \"c\" to print current cursor position\r\n- Use Esc to quit\r\n";
         let _ = handle.data(channel, HELP.into()).await;
-        tokio::task::spawn_blocking(move || {
+        let app_recv_for_forward = app.recv.take().unwrap();
+        let pty2 = pty.clone();
+        let writer = SenderWriter::new(tx.clone());
+        tokio::spawn(async move {
             let supports_keyboard_enhancement = matches!(
-                crossterm::terminal::supports_keyboard_enhancement(&pty),
+                crossterm::terminal::supports_keyboard_enhancement(&pty2).await,
                 Ok(true)
             );
-            let mut tx = SenderWriter::new(tx);
 
             if supports_keyboard_enhancement {
-                let _ = queue!(
-                    tx,
+                let _ = async_queue!(
+                    &writer,
                     PushKeyboardEnhancementFlags(
                         KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                             | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
                             | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
                             | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
                     )
-                );
+                )
+                .await;
             }
 
-            let _ = execute!(
-                tx,
+            let _ = async_execute!(
+                &writer,
                 EnableBracketedPaste,
                 EnableFocusChange,
                 EnableMouseCapture,
-            );
+            )
+            .await;
 
             loop {
-                // Blocking read
-                let event = match read(&pty) {
+                let event = match read(&pty2).await {
                     Ok(e) => e,
                     Err(_) => {
                         continue;
@@ -224,17 +227,17 @@ impl Handler for AppServer {
                 };
 
                 let data = format!("Event: {event:?}\r\n");
-                let _ = tx3.blocking_send(data.into());
+                let _ = tx3.send(data.into()).await;
 
                 if event == Event::Key(KeyCode::Char('c').into()) {
-                    let data = format!("Cursor position: {:?}\r\n", position(&pty));
-                    let _ = tx3.blocking_send(data.into());
+                    let data = format!("Cursor position: {:?}\r\n", position(&pty2).await);
+                    let _ = tx3.send(data.into()).await;
                 }
 
                 if let Event::Resize(x, y) = event {
-                    let (original_size, new_size) = flush_resize_events(&pty, (x, y));
+                    let (original_size, new_size) = flush_resize_events(&pty2, (x, y)).await;
                     let data = format!("Resize from: {original_size:?}, to: {new_size:?}\r\n");
-                    let _ = tx3.blocking_send(data.into());
+                    let _ = tx3.send(data.into()).await;
                 }
 
                 if event == Event::Key(KeyCode::Esc.into()) {
@@ -242,22 +245,21 @@ impl Handler for AppServer {
                 }
             }
             if supports_keyboard_enhancement {
-                let _ = queue!(tx, PopKeyboardEnhancementFlags);
+                let _ = async_queue!(&writer, PopKeyboardEnhancementFlags).await;
             }
 
-            let _ = execute!(
-                tx,
+            let _ = async_execute!(
+                &writer,
                 DisableBracketedPaste,
                 DisableFocusChange,
                 DisableMouseCapture
-            );
+            )
+            .await;
         });
-        let r = app.recv.clone();
-        tokio::task::spawn_blocking(move || loop {
-            if let Ok(d) = r.recv() {
-                let _ = tx2.blocking_send(d);
-            } else {
-                break;
+        let mut r = app_recv_for_forward;
+        tokio::spawn(async move {
+            while let Some(d) = r.recv().await {
+                let _ = tx2.send(d).await;
             }
         });
         tokio::spawn(async move {
@@ -277,10 +279,10 @@ impl Handler for AppServer {
 // Resize events can occur in batches.
 // With a simple loop they can be flushed.
 // This function will keep the first and last resize event.
-fn flush_resize_events(event: &NoTtyEvent, first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
+async fn flush_resize_events(event: &NoTtyEvent, first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     let mut last_resize = first_resize;
-    while let Ok(true) = poll(event, Duration::from_millis(50)) {
-        if let Ok(Event::Resize(x, y)) = read(event) {
+    while let Ok(true) = poll(event, Duration::from_millis(50)).await {
+        if let Ok(Event::Resize(x, y)) = read(event).await {
             last_resize = (x, y);
         }
     }
