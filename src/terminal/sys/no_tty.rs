@@ -129,6 +129,10 @@ async fn query_keyboard_enhancement_flags_raw(
                     "The keyboard enhancement status could not be read within a normal duration",
                 ));
             }
+            // The input channel disconnected; propagate so the caller can stop.
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                return Err(e);
+            }
             Err(_) => {}
         }
     }

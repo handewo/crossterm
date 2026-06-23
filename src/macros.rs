@@ -150,7 +150,7 @@ macro_rules! async_queue {
                 $crate::event::SenderWriter::write_all($writer, __buf.as_bytes()).await
             } else {
                 ::std::result::Result::Err(::std::io::Error::new(
-                    ::std::io::ErrorKind::Other,
+                    ::std::io::ErrorKind::InvalidData,
                     "failed to write ANSI command",
                 ))
             }
