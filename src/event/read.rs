@@ -1,19 +1,19 @@
 use std::{collections::vec_deque::VecDeque, io, time::Duration};
 
+#[cfg(feature = "no-tty")]
+use crate::event::source::no_tty::NoTtyInternalEventSource;
 #[cfg(unix)]
 #[cfg(not(feature = "no-tty"))]
 use crate::event::source::unix::UnixInternalEventSource;
 #[cfg(windows)]
 #[cfg(not(feature = "no-tty"))]
 use crate::event::source::windows::WindowsEventSource;
+#[cfg(not(feature = "no-tty"))]
+use crate::event::source::EventSource;
 #[cfg(feature = "event-stream")]
 #[cfg(not(feature = "no-tty"))]
 use crate::event::sys::Waker;
 use crate::event::{filter::Filter, internal::InternalEvent, timeout::PollTimeout};
-#[cfg(not(feature = "no-tty"))]
-use crate::event::source::EventSource;
-#[cfg(feature = "no-tty")]
-use crate::event::source::no_tty::NoTtyInternalEventSource;
 
 /// Can be used to read `InternalEvent`s.
 pub(crate) struct InternalEventReader {

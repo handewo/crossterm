@@ -16,10 +16,10 @@ use crossterm::{
     },
     terminal::WindowSize,
 };
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use russh::keys::ssh_key::PublicKey;
 use russh::server::*;
 use russh::{Channel, ChannelId, Pty};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 
 struct App {
@@ -279,7 +279,10 @@ impl Handler for AppServer {
 // Resize events can occur in batches.
 // With a simple loop they can be flushed.
 // This function will keep the first and last resize event.
-async fn flush_resize_events(event: &NoTtyEvent, first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
+async fn flush_resize_events(
+    event: &NoTtyEvent,
+    first_resize: (u16, u16),
+) -> ((u16, u16), (u16, u16)) {
     let mut last_resize = first_resize;
     while let Ok(true) = poll(event, Duration::from_millis(50)).await {
         if let Ok(Event::Resize(x, y)) = read(event).await {

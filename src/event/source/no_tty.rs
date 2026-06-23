@@ -2,9 +2,7 @@ use std::{collections::VecDeque, io, time::Duration};
 
 use tokio::sync::mpsc::Receiver;
 
-use crate::event::{
-    internal::InternalEvent, sys::unix::parse::parse_event, timeout::PollTimeout,
-};
+use crate::event::{internal::InternalEvent, sys::unix::parse::parse_event, timeout::PollTimeout};
 
 pub struct NoTtyInternalEventSource {
     parser: Parser,

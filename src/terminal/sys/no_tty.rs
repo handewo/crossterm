@@ -44,8 +44,9 @@ pub(crate) fn disable_raw_mode() -> io::Result<()> {
 
 /// Queries the terminal's support for progressive keyboard enhancement.
 ///
-/// On unix systems, this function will block and possibly time out while
-/// [`crossterm::event::read`](crate::event::read) or [`crossterm::event::poll`](crate::event::poll) are being called.
+/// This sends a query out the event handle's query channel and awaits the response. It
+/// may time out while [`crossterm::event::read`](crate::event::read) or
+/// [`crossterm::event::poll`](crate::event::poll) are being awaited.
 #[cfg(feature = "events")]
 pub async fn supports_keyboard_enhancement(event: &NoTtyEvent) -> io::Result<bool> {
     query_keyboard_enhancement_flags(event)
@@ -55,8 +56,9 @@ pub async fn supports_keyboard_enhancement(event: &NoTtyEvent) -> io::Result<boo
 
 /// Queries the terminal's currently active keyboard enhancement flags.
 ///
-/// On unix systems, this function will block and possibly time out while
-/// [`crossterm::event::read`](crate::event::read) or [`crossterm::event::poll`](crate::event::poll) are being called.
+/// This sends a query out the event handle's query channel and awaits the response. It
+/// may time out while [`crossterm::event::read`](crate::event::read) or
+/// [`crossterm::event::poll`](crate::event::poll) are being awaited.
 #[cfg(feature = "events")]
 pub async fn query_keyboard_enhancement_flags(
     event: &NoTtyEvent,
