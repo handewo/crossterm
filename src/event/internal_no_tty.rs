@@ -109,3 +109,27 @@ impl SenderWriter {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::NoTtyEvent;
+    use crate::event::{read, Event, KeyCode, KeyModifiers};
+
+    #[tokio::test]
+    async fn read_parses_byte_fed_through_input_channel() {
+        // Input channel: host -> crossterm parser.
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+        let (pty, _query_rx) = NoTtyEvent::new(input_rx);
+
+        // Feed a plain 'a' keystroke.
+        input_tx.send(b"a".to_vec()).await.unwrap();
+
+        let event = read(&pty).await.unwrap();
+        assert_eq!(event, Event::Key(KeyCode::Char('a').into()));
+
+        // Keep the modifiers assertion explicit so the test documents intent.
+        if let Event::Key(key) = event {
+            assert_eq!(key.modifiers, KeyModifiers::NONE);
+        }
+    }
+}
