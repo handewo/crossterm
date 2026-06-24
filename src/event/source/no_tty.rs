@@ -1,16 +1,17 @@
 use std::{collections::VecDeque, io, time::Duration};
 
+use bytes::Bytes;
 use tokio::sync::mpsc::Receiver;
 
 use crate::event::{internal::InternalEvent, sys::unix::parse::parse_event, timeout::PollTimeout};
 
 pub struct NoTtyInternalEventSource {
     parser: Parser,
-    recv: Receiver<Vec<u8>>,
+    recv: Receiver<Bytes>,
 }
 
 impl NoTtyInternalEventSource {
-    pub fn new(recv: Receiver<Vec<u8>>) -> io::Result<Self> {
+    pub fn new(recv: Receiver<Bytes>) -> io::Result<Self> {
         Ok(NoTtyInternalEventSource {
             parser: Parser::default(),
             recv,

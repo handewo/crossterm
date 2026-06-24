@@ -2,6 +2,7 @@ use super::internal::InternalEvent;
 use crate::event::source::no_tty::NoTtyInternalEventSource;
 use crate::event::{filter::Filter, read::InternalEventReader};
 use crate::terminal::WindowSize;
+use bytes::Bytes;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 #[derive(Clone)]
 pub struct NoTtyEvent {
-    pub(crate) send: Sender<Vec<u8>>,
+    pub(crate) send: Sender<Bytes>,
     pub window_size: Arc<Mutex<WindowSize>>,
     inner: Arc<AsyncMutex<InternalEventReader>>,
 }
@@ -21,7 +22,7 @@ impl NoTtyEvent {
     /// `recv` is the channel that carries raw input bytes (e.g. from an SSH client) into
     /// crossterm's parser. The returned [`Receiver`] carries crossterm's outgoing query
     /// escape sequences (cursor position, keyboard enhancement) back to the host.
-    pub fn new(recv: Receiver<Vec<u8>>) -> (Self, Receiver<Vec<u8>>) {
+    pub fn new(recv: Receiver<Bytes>) -> (Self, Receiver<Bytes>) {
         let (s, r) = channel(16);
         let source = NoTtyInternalEventSource::new(recv);
         let source = source.ok().map(Box::new);
@@ -94,17 +95,17 @@ impl NoTtyEvent {
 /// An async writer over an mpsc channel, used to forward crossterm command output
 /// (ANSI escape sequences) to the host that owns the receiving end.
 #[derive(Clone)]
-pub struct SenderWriter(tokio::sync::mpsc::Sender<Vec<u8>>);
+pub struct SenderWriter(tokio::sync::mpsc::Sender<Bytes>);
 
 impl SenderWriter {
-    pub fn new(sender: tokio::sync::mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn new(sender: tokio::sync::mpsc::Sender<Bytes>) -> Self {
         Self(sender)
     }
 
     /// Sends the given bytes over the channel, awaiting capacity.
     pub async fn write_all(&self, buf: &[u8]) -> std::io::Result<()> {
         self.0
-            .send(buf.to_vec())
+            .send(Bytes::copy_from_slice(buf))
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))
     }
@@ -114,15 +115,16 @@ impl SenderWriter {
 mod tests {
     use super::NoTtyEvent;
     use crate::event::{read, Event, KeyCode, KeyModifiers};
+    use bytes::Bytes;
 
     #[tokio::test]
     async fn read_parses_byte_fed_through_input_channel() {
         // Input channel: host -> crossterm parser.
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel::<Bytes>(8);
         let (pty, _query_rx) = NoTtyEvent::new(input_rx);
 
         // Feed a plain 'a' keystroke.
-        input_tx.send(b"a".to_vec()).await.unwrap();
+        input_tx.send(Bytes::from_static(b"a")).await.unwrap();
 
         let event = read(&pty).await.unwrap();
         assert_eq!(event, Event::Key(KeyCode::Char('a').into()));

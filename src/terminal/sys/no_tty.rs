@@ -103,7 +103,7 @@ async fn query_keyboard_enhancement_flags_raw(
 
     event
         .send
-        .send_timeout(QUERY.into(), Duration::from_secs(1))
+        .send_timeout(bytes::Bytes::from_static(QUERY), Duration::from_secs(1))
         .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 

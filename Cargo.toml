@@ -39,7 +39,7 @@ derive-more = ["dep:derive_more"]
 #! ### Optional Features
 
 ## Enable non-psudo-terminal
-no-tty = ["dep:tokio", "events", "bracketed-paste"]
+no-tty = ["dep:tokio", "dep:bytes", "events", "bracketed-paste"]
 
 ## Enables documentation for crate features.
 document-features = ["dep:document-features"]
@@ -59,6 +59,7 @@ osc52 = ["dep:base64"]
 [dependencies]
 base64 = { version = "0.22", optional = true }
 bitflags = { version = "2.9" }
+bytes = { version = "1", optional = true }
 derive_more = { version = "2.0.0", features = ["is_variant"], optional = true }
 document-features = { version = "0.2.11", optional = true }
 futures-core = { version = "0.3", optional = true, default-features = false }

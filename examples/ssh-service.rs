@@ -6,6 +6,7 @@ use crossterm::event::{
 };
 use std::time::Duration;
 
+use bytes::Bytes;
 use crossterm::event::{NoTtyEvent, SenderWriter};
 use crossterm::{
     async_execute, async_queue,
@@ -24,8 +25,8 @@ use tokio::sync::Mutex;
 
 struct App {
     pub pty: NoTtyEvent,
-    pub send: Sender<Vec<u8>>,
-    pub recv: Option<Receiver<Vec<u8>>>,
+    pub send: Sender<Bytes>,
+    pub recv: Option<Receiver<Bytes>>,
 }
 
 #[derive(Clone)]
@@ -79,7 +80,7 @@ impl Handler for AppServer {
         _channel: Channel<Msg>,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
-        let (app_send, term_recv) = channel::<Vec<u8>>(64);
+        let (app_send, term_recv) = channel::<Bytes>(64);
         let (psudo_tty, app_recv) = NoTtyEvent::new(term_recv);
         let app = App {
             pty: psudo_tty,
@@ -105,7 +106,7 @@ impl Handler for AppServer {
     ) -> Result<(), Self::Error> {
         let mut clients = self.clients.lock().await;
         let app = clients.get_mut(&self.id).unwrap();
-        let _ = app.send.send(data.into()).await;
+        let _ = app.send.send(Bytes::copy_from_slice(data)).await;
         if data == [3] {
             return Err(russh::Error::Disconnect);
         }
@@ -139,7 +140,7 @@ impl Handler for AppServer {
         win_raw.push(b';');
         win_raw.extend_from_slice(row.as_bytes());
         win_raw.push(b'R');
-        let _ = app.send.send(win_raw).await;
+        let _ = app.send.send(win_raw.into()).await;
 
         Ok(())
     }
@@ -183,7 +184,7 @@ impl Handler for AppServer {
         let app = clients.get_mut(&self.id).unwrap();
         let pty = app.pty.clone();
         let handle = session.handle();
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(5);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(5);
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         const HELP: &str = "Blocking read()\r\n- Keyboard, mouse, focus and terminal resize events enabled\r\n- Hit \"c\" to print current cursor position\r\n- Use Esc to quit\r\n";
@@ -265,7 +266,7 @@ impl Handler for AppServer {
         tokio::spawn(async move {
             loop {
                 if let Some(data) = rx.recv().await {
-                    let _ = handle.data(channel, data.into()).await;
+                    let _ = handle.data(channel, data.to_vec().into()).await;
                 } else {
                     let _ = handle.close(channel).await;
                 }

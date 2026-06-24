@@ -7,6 +7,8 @@ use crate::event::{
     filter::CursorPositionFilter, internal::InternalEvent, internal_no_tty::NoTtyEvent,
 };
 
+use bytes::Bytes;
+
 /// Returns the cursor position (column, row).
 ///
 /// The top left cell is represented as `(0, 0)`.
@@ -18,7 +20,7 @@ pub async fn position(event: &NoTtyEvent) -> io::Result<(u16, u16)> {
     // Use `ESC [ 6 n` to request the cursor position.
     event
         .send
-        .send_timeout(b"\x1B[6n".into(), Duration::from_secs(1))
+        .send_timeout(Bytes::from_static(b"\x1B[6n"), Duration::from_secs(1))
         .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
