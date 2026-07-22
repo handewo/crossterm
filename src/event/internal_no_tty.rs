@@ -102,6 +102,12 @@ impl SenderWriter {
         Self(sender)
     }
 
+    pub fn blocking_write_all(&self, buf: &[u8]) -> std::io::Result<()> {
+        self.0
+            .blocking_send(Bytes::copy_from_slice(buf))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))
+    }
+
     /// Sends the given bytes over the channel, awaiting capacity.
     pub async fn write_all(&self, buf: &[u8]) -> std::io::Result<()> {
         self.0
